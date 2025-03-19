@@ -1,0 +1,274 @@
+Here are all the steps from the beginning to the end:
+
+**Prerequisites**
+
+* 2 EC2 instances (1 master node and 1 worker node)
+* Kubernetes cluster set up on the EC2 instances
+* kubectl installed and configured on your machine
+
+**Step 1: Create a namespace for monitoring tools**
+
+1. Create a new namespace for the monitoring tools:
+```
+kubectl create namespace monitoring
+```
+**Step 2: Install Prometheus**
+
+1. Create a YAML file for the Prometheus deployment:
+```yaml
+# prometheus-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prometheus/prometheus:v2.34.0
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-data
+          mountPath: /prometheus
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-data
+        emptyDir: {}
+```
+2. Create a YAML file for the Prometheus service:
+```yaml
+# prometheus-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+```
+3. Create a ConfigMap for the Prometheus configuration:
+```yaml
+# prometheus-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+    - job_name: kubernetes-nodes
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+    - job_name: kubernetes-pods
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+```
+4. Apply the YAML files:
+```
+kubectl apply -f prometheus-deployment.yaml
+kubectl apply -f prometheus-service.yaml
+kubectl apply -f prometheus-config.yaml
+```
+**Step 3: Install Grafana**
+
+1. Create a YAML file for the Grafana deployment:
+```yaml
+# grafana-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:8.5.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-admin-password
+              key: GF_SECURITY_ADMIN_PASSWORD
+        - name: GF_SERVER_HTTP_PORT
+          value: "3000"
+```
+2. Create a YAML file for the Grafana service:
+```yaml
+# grafana-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+  type: ClusterIP
+```
+3. Create a secret for the Grafana admin password:
+```yaml
+# grafana-admin-password.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin-password
+  namespace: monitoring
+type: Opaque
+data:
+  GF_SECURITY_ADMIN_PASSWORD: YWRtaW4=
+```
+4. Apply the YAML files:
+```
+kubectl apply -f grafana-deployment.yaml
+kubectl apply -f grafana-service.yaml
+kubectl apply -f grafana-admin-password.yaml
+```
+**Step 4: Configure AWS Security Group**
+
+1. Log in to the AWS Management Console.
+2. Navigate to the VPC dashboard.
+3. Select the security group associated with your EC2 instance (e.g., `my-ec2-instance-sg`).
+4. Click on the "Actions" dropdown menu and select "Edit inbound rules".
+5. Click on the "Add rule" button.
+6. Select "Custom TCP rule" as the rule type.
+7. Enter the following settings:
+	* Protocol: TCP
+	* Port range: 3000 (for Grafana) or 9090 (for Prometheus)
+	* Source: 0.0.0.0/0 (allow incoming traffic from anywhere)
+8. Click on the "Save" button.
+
+**Step 5: Create a Network Policy**
+
+```yaml
+# allow-incoming-traffic.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-incoming-traffic
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 3000
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 9090
+```
+2. Apply the YAML file:
+```
+kubectl apply -f allow-incoming-traffic.yaml
+```
+**Step 6: Create a ClusterRole and ClusterRoleBinding**
+
+1. Create a YAML file for the ClusterRole:
+```yaml
+# monitoring-cluster-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: monitoring-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch"]
+```
+2. Apply the YAML file:
+```
+kubectl apply -f monitoring-cluster-role.yaml
+```
+3. Create a YAML file for the ClusterRoleBinding:
+```yaml
+# monitoring-cluster-role-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: monitoring-cluster-role-binding
+roleRef:
+  name: monitoring-cluster-role
+  kind: ClusterRole
+subjects:
+- kind: ServiceAccount
+  name: grafana
+  namespace: monitoring
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+```
+4. Apply the YAML file:
+```
+kubectl apply -f monitoring-cluster-role-binding.yaml
+```
+**Step 7: Access Prometheus and Grafana**
+
+1. Access the Prometheus dashboard by running:
+```
+kubectl port-forward svc/prometheus 9090:9090 -n monitoring
+```
+2. Open a web browser and navigate to `http://localhost:9090`.
+3. Access the Grafana dashboard by running:
+```
+kubectl port-forward svc/grafana 3000:3000 -n monitoring
+```
+4. Open a web browser and navigate to `http://localhost:3000`. Log in with the admin username `admin` and the password `admin`.
+
+That's it! You should now have Prometheus and Grafana set up on your Kubernetes cluster.
+
+You can also run Prometheus and Grafana using Docker:
+```
+sudo docker run -d --name prometheus -p 9090:9090 quay.io/prometheus/prometheus:v2.34.0
+sudo docker run -d --name grafana -p 3000:3000 grafana/grafana
+```
+Then, access Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`.
