@@ -1,4 +1,4 @@
-Here are all the steps from the beginning to the end:
+Here are all the steps again, including the Node Exporter:
 
 **Prerequisites**
 
@@ -91,6 +91,19 @@ data:
       relabel_configs:
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
+    - job_name: node-exporter
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+      - source_labels: [__meta_kubernetes_node_address_InternalIP]
+        target_label: __address__
+        replacement: ${1}:9100
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets: ["alertmanager:9093"]
 ```
 4. Apply the YAML files:
 ```
@@ -98,7 +111,51 @@ kubectl apply -f prometheus-deployment.yaml
 kubectl apply -f prometheus-service.yaml
 kubectl apply -f prometheus-config.yaml
 ```
-**Step 3: Install Grafana**
+**Step 3: Install Node Exporter**
+
+1. Create a YAML file for the Node Exporter DaemonSet:
+```yaml
+# node-exporter-daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      containers:
+      - name: node-exporter
+        image: quay.io/prometheus/node-exporter:v1.3.1
+        ports:
+        - containerPort: 9100
+        volumeMounts:
+        - name: proc
+          mountPath: /proc
+        - name: sys
+          mountPath: /sys
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+```
+2. Apply the YAML file:
+```
+kubectl apply -f node-exporter-daemonset.yaml
+```
+**Step 4: Install Grafana**
 
 1. Create a YAML file for the Grafana deployment:
 ```yaml
@@ -167,7 +224,7 @@ kubectl apply -f grafana-deployment.yaml
 kubectl apply -f grafana-service.yaml
 kubectl apply -f grafana-admin-password.yaml
 ```
-**Step 4: Configure AWS Security Group**
+**Step 5: Configure AWS Security Group**
 
 1. Log in to the AWS Management Console.
 2. Navigate to the VPC dashboard.
@@ -181,7 +238,7 @@ kubectl apply -f grafana-admin-password.yaml
 	* Source: 0.0.0.0/0 (allow incoming traffic from anywhere)
 8. Click on the "Save" button.
 
-**Step 5: Create a Network Policy**
+**Step 6: Create a Network Policy**
 
 ```yaml
 # allow-incoming-traffic.yaml
@@ -211,7 +268,7 @@ spec:
 ```
 kubectl apply -f allow-incoming-traffic.yaml
 ```
-**Step 6: Create a ClusterRole and ClusterRoleBinding**
+**Step 7: Create a ClusterRole and ClusterRoleBinding**
 
 1. Create a YAML file for the ClusterRole:
 ```yaml
@@ -251,7 +308,7 @@ subjects:
 ```
 kubectl apply -f monitoring-cluster-role-binding.yaml
 ```
-**Step 7: Access Prometheus and Grafana**
+**Step 8: Access Prometheus and Grafana**
 
 1. Access the Prometheus dashboard by running:
 ```
@@ -264,11 +321,4 @@ kubectl port-forward svc/grafana 3000:3000 -n monitoring
 ```
 4. Open a web browser and navigate to `http://localhost:3000`. Log in with the admin username `admin` and the password `admin`.
 
-That's it! You should now have Prometheus and Grafana set up on your Kubernetes cluster.
-
-You can also run Prometheus and Grafana using Docker:
-```
-sudo docker run -d --name prometheus -p 9090:9090 quay.io/prometheus/prometheus:v2.34.0
-sudo docker run -d --name grafana -p 3000:3000 grafana/grafana
-```
-Then, access Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`.
+That's it! You should now have Prometheus and Grafana set up on your Kubernetes cluster, with Node Exporter metrics being scraped by Prometheus.
